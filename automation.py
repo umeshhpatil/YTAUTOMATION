@@ -1058,9 +1058,13 @@ function renderJob(s){
 function pollJob(jid){
  if(pollTimer)clearInterval(pollTimer);
  const tick=async()=>{
-  const s=await(await fetch('/api/auto/job/'+jid)).json();
-  renderJob(s);
-  if(s.done){clearInterval(pollTimer);pollTimer=null;$('go').disabled=false;loadRuns();}
+  try{
+   const r=await fetch('/api/auto/job/'+jid);
+   if(!r.ok)throw new Error(`Server returned HTTP ${r.status} (container may have restarted or run out of memory)`);
+   const s=await r.json();
+   renderJob(s);
+   if(s.done){clearInterval(pollTimer);pollTimer=null;$('go').disabled=false;loadRuns();}
+  }catch(e){$('err').textContent=e.message;clearInterval(pollTimer);pollTimer=null;$('go').disabled=false;}
  };
  tick();
  pollTimer=setInterval(tick,1500);

@@ -36,11 +36,15 @@ import time
 from pathlib import Path
 
 MAX_SHORT_SECONDS = 180  # YouTube Shorts allow up to 3 minutes
-STREAM_FORMAT = (
-    "bv*[height<=1080][protocol^=http]+ba[protocol^=http]/"
-    "b[height<=1080][protocol^=http]/"
-    "bv*[height<=1080]+ba/b[height<=1080]/b"
-)
+
+
+def _stream_format() -> str:
+    h = int(os.getenv("MAX_HEIGHT", "1080"))
+    return (
+        f"bv*[height<={h}][protocol^=http]+ba[protocol^=http]/"
+        f"b[height<={h}][protocol^=http]/"
+        f"bv*[height<={h}]+ba/b[height<={h}]/b"
+    )
 
 
 def temp_workdir() -> Path:
@@ -180,9 +184,10 @@ def get_streams(
     """Resolve remote video/audio stream URLs via yt-dlp without downloading locally."""
     import yt_dlp
 
+    fmt_primary = _stream_format()
     extra = {"extractor_args": {"youtube": {"player_client": player_clients}}} if player_clients else {}
     info = None
-    for fmt in (STREAM_FORMAT, "bestvideo+bestaudio/best"):
+    for fmt in (fmt_primary, "bestvideo+bestaudio/best"):
         try:
             with yt_dlp.YoutubeDL(ydl_opts(format=fmt, skip_download=True, **extra)) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -295,11 +300,11 @@ def build_filter(mode: str, subs_path: Path | None = None, audio_idx: int = 0) -
         if audio_idx > 0:
             return ["-vf", vf, "-map", "0:v", "-map", f"{audio_idx}:a?"]
         return ["-vf", vf]
-    # Blur mode: full video centered, blurred copy fills the background
+    # Blur mode: downscale background to 270x480 before blurring to cut RAM/CPU by ~16x
     graph = (
         "[0:v]split=2[bg][fg];"
-        "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
-        "crop=1080:1920,boxblur=25:5[bgb];"
+        "[bg]scale=270:480:force_original_aspect_ratio=increase,"
+        "crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear[bgb];"
         "[fg]scale=1080:-2[fgs];"
         f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1{ass}[v]"
     )
@@ -332,10 +337,11 @@ def _run_ffmpeg_cut(
                 if hdr_lines:
                     cmd.extend(["-headers", hdr_lines])
         cmd.extend(["-ss", f"{start:.3f}", "-i", src_str])
+    threads = os.getenv("FFMPEG_THREADS", "0")
     cmd.extend([
         "-t", f"{duration:.3f}",
         *build_filter(mode, subs_path, audio_idx=1 if len(inputs) > 1 else 0),
-        "-c:v", "libx264", "-preset", preset, "-crf", "22", "-pix_fmt", "yuv420p", "-threads", "0",
+        "-c:v", "libx264", "-preset", preset, "-crf", "22", "-pix_fmt", "yuv420p", "-threads", threads,
         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
         str(out),
     ])
@@ -346,8 +352,9 @@ def _download_section(url: str, start: float, end: float, workdir: Path) -> Path
     import yt_dlp
     from yt_dlp.utils import download_range_func
 
+    h = int(os.getenv("MAX_HEIGHT", "1080"))
     opts = ydl_opts(
-        format="bv*[height<=1080]+ba/b[height<=1080]/bestvideo+bestaudio/best",
+        format=f"bv*[height<={h}]+ba/b[height<={h}]/bestvideo+bestaudio/best",
         merge_output_format="mp4",
         download_ranges=download_range_func(None, [(start, end)]),
         force_keyframes_at_cuts=True,
