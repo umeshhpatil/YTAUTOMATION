@@ -1,0 +1,8 @@
+flask
+gunicorn
+yt-dlp
+anthropic
+google-genai>=2.30.1
+google-api-python-client
+google-auth-oauthlib
+
