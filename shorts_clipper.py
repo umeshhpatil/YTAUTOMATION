@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -144,8 +145,8 @@ def _normalize_cookies(raw: str) -> str:
 
 
 def ydl_opts(**extra) -> dict:
-    """Build yt-dlp options, attaching YT_COOKIES env var if set."""
-    opts = {"quiet": True, "noplaylist": True, **extra}
+    """Build yt-dlp options, attaching YT_COOKIES env var and IPv4 binding."""
+    opts = {"quiet": True, "noplaylist": True, "source_address": "0.0.0.0", **extra}
     cookies = os.getenv("YT_COOKIES", "").strip()
     if cookies:
         norm = _normalize_cookies(cookies)
@@ -348,21 +349,26 @@ def _run_ffmpeg_cut(
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
-def _download_section(url: str, start: float, end: float, workdir: Path) -> Path:
-    import yt_dlp
-    from yt_dlp.utils import download_range_func
+_FALLBACK_LOCK = threading.Lock()
 
-    h = int(os.getenv("MAX_HEIGHT", "1080"))
-    opts = ydl_opts(
-        format=f"bv*[height<={h}]+ba/b[height<={h}]/bestvideo+bestaudio/best",
-        merge_output_format="mp4",
-        download_ranges=download_range_func(None, [(start, end)]),
-        force_keyframes_at_cuts=True,
-        outtmpl=str(workdir / "section.%(ext)s"),
-    )
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
-    return next(workdir.glob("section.*"))
+
+def _download_source(url: str, workdir: Path) -> Path:
+    """Download via yt-dlp's Python HTTP stack (avoids ffmpeg HTTP 403 / exit code 8)."""
+    import yt_dlp
+
+    with _FALLBACK_LOCK:
+        existing = [p for p in workdir.glob("fallback.*") if p.suffix in (".mp4", ".mkv", ".webm")]
+        if existing:
+            return existing[0]
+        h = int(os.getenv("MAX_HEIGHT", "1080"))
+        opts = ydl_opts(
+            format=f"bv*[height<={h}]+ba/b[height<={h}]/bestvideo+bestaudio/best",
+            merge_output_format="mp4",
+            outtmpl=str(workdir / "fallback.%(ext)s"),
+        )
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+        return next(p for p in workdir.glob("fallback.*") if p.suffix in (".mp4", ".mkv", ".webm"))
 
 
 def cut_clip(
@@ -374,6 +380,7 @@ def cut_clip(
     subs_path: Path | None = None,
     preset: str = "veryfast",
     fallback_url: str | None = None,
+    fallback_dir: Path | None = None,
 ) -> None:
     duration = end - start
     if duration > MAX_SHORT_SECONDS:
@@ -381,17 +388,20 @@ def cut_clip(
     inputs = source if isinstance(source, list) else [(str(source), {})]
     try:
         _run_ffmpeg_cut(inputs, start, duration, out, mode, subs_path, preset)
-    except subprocess.CalledProcessError as err:
-        stderr = err.stderr.decode(errors="ignore") if err.stderr else ""
-        if not (isinstance(source, list) and fallback_url and ("403" in stderr or "HTTP error" in stderr)):
+    except subprocess.CalledProcessError:
+        if not (isinstance(source, list) and fallback_url):
             raise
         try:
-            alt_streams, _, _, _ = get_streams(fallback_url, player_clients=["android", "tv"])
+            alt_streams, _, _, _ = get_streams(fallback_url, player_clients=["tv", "web_safari"])
             _run_ffmpeg_cut(alt_streams, start, duration, out, mode, subs_path, preset)
         except subprocess.CalledProcessError:
-            with tempfile.TemporaryDirectory() as td:
-                sec = _download_section(fallback_url, start, end, Path(td))
-                _run_ffmpeg_cut([(str(sec), {})], 0.0, duration, out, mode, subs_path, preset)
+            if fallback_dir is not None:
+                sec = _download_source(fallback_url, fallback_dir)
+                _run_ffmpeg_cut([(str(sec), {})], start, duration, out, mode, subs_path, preset)
+            else:
+                with tempfile.TemporaryDirectory() as td:
+                    sec = _download_source(fallback_url, Path(td))
+                    _run_ffmpeg_cut([(str(sec), {})], start, duration, out, mode, subs_path, preset)
 
 
 def main() -> None:

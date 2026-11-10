@@ -17,6 +17,7 @@ Only use this on videos you own or have permission to reuse.
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hmac
 import os
+import tempfile
 import threading
 import uuid
 from pathlib import Path
@@ -63,21 +64,23 @@ def run_job(jid: str, url: str, clips: list, mode: str) -> None:
         done_count = 0
         lock = threading.Lock()
 
-        def _cut(idx: int, s: float, e: float) -> tuple[int, dict]:
+        def _cut(idx: int, s: float, e: float, fb_dir: Path) -> tuple[int, dict]:
             name = f"{vid}_{jid}_{int(s)}-{int(e)}_{mode}.mp4"
-            sc.cut_clip(streams, float(s), float(e), OUT / name, mode, fallback_url=url)
+            sc.cut_clip(streams, float(s), float(e), OUT / name, mode, fallback_url=url, fallback_dir=fb_dir)
             return idx, {"name": f"{vid}_{int(s)}-{int(e)}_{mode}.mp4", "url": f"/clips/{name}"}
 
         workers = min(max(1, int(os.getenv("MAX_WORKERS", "3"))), total)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = [pool.submit(_cut, i, s, e) for i, (s, e) in enumerate(clips, 1)]
-            for fut in as_completed(futs):
-                idx, entry = fut.result()
-                with lock:
-                    results[idx] = entry
-                    done_count += 1
-                    job["progress"] = round(done_count / total * 100)
-                    job["status"] = f"Clipped {done_count} of {total}..."
+        with tempfile.TemporaryDirectory() as fb_td:
+            fb_dir = Path(fb_td)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = [pool.submit(_cut, i, s, e, fb_dir) for i, (s, e) in enumerate(clips, 1)]
+                for fut in as_completed(futs):
+                    idx, entry = fut.result()
+                    with lock:
+                        results[idx] = entry
+                        done_count += 1
+                        job["progress"] = round(done_count / total * 100)
+                        job["status"] = f"Clipped {done_count} of {total}..."
 
         job["files"] = [results[i] for i in range(1, total + 1)]
         job["progress"] = 100

@@ -555,7 +555,7 @@ def run(jid: str, p: dict) -> None:
         lock = threading.Lock()
         has_uploads = bool(yt or drive)
 
-        def _process_clip(i: int, s: float, e: float) -> None:
+        def _process_clip(i: int, s: float, e: float, fb_dir: Path) -> None:
             nonlocal done_count
             item = job["items"][i - 1]
             name = f"{info['id']}_{jid}_{i:02d}.mp4"
@@ -568,7 +568,7 @@ def run(jid: str, p: dict) -> None:
                         if p.get("captions") and transcript
                         else None
                     )
-                    sc.cut_clip(streams, s, e, out_path, p["mode"], subs_path=subs_path, fallback_url=p["url"])
+                    sc.cut_clip(streams, s, e, out_path, p["mode"], subs_path=subs_path, fallback_url=p["url"], fallback_dir=fb_dir)
                 item.update(file=f"/clips/{name}", name=name, status="Writing metadata...")
                 clip_text = clip_transcript_text(transcript, s, e)
                 md = make_metadata(info, p["url"], p["niche"], i, total, transcript=clip_text)
@@ -589,10 +589,12 @@ def run(jid: str, p: dict) -> None:
                 job["progress"] = round(done_count / total * (70 if has_uploads else 100))
 
         workers = min(max(1, int(os.getenv("MAX_WORKERS", "3"))), total)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = [pool.submit(_process_clip, i, s, e) for i, (s, e) in enumerate(segs, 1)]
-            for fut in as_completed(futs):
-                fut.result()
+        with tempfile.TemporaryDirectory() as fb_td:
+            fb_dir = Path(fb_td)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = [pool.submit(_process_clip, i, s, e, fb_dir) for i, (s, e) in enumerate(segs, 1)]
+                for fut in as_completed(futs):
+                    fut.result()
 
         if has_uploads:
             for i in range(1, total + 1):
