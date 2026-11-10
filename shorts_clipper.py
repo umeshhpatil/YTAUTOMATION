@@ -181,9 +181,15 @@ def get_streams(
     import yt_dlp
 
     extra = {"extractor_args": {"youtube": {"player_client": player_clients}}} if player_clients else {}
-    opts = ydl_opts(format=STREAM_FORMAT, skip_download=True, **extra)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    info = None
+    for fmt in (STREAM_FORMAT, "bestvideo+bestaudio/best"):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts(format=fmt, skip_download=True, **extra)) as ydl:
+                info = ydl.extract_info(url, download=False)
+            break
+        except Exception as err:  # noqa: BLE001
+            if "Requested format is not available" not in str(err) or fmt == "bestvideo+bestaudio/best":
+                raise
     req_fmts = info.get("requested_formats") or []
     if req_fmts:
         streams = [(f["url"], f.get("http_headers") or {}) for f in req_fmts[:2] if f.get("url")]
@@ -341,12 +347,11 @@ def _download_section(url: str, start: float, end: float, workdir: Path) -> Path
     from yt_dlp.utils import download_range_func
 
     opts = ydl_opts(
-        format="bv*[height<=1080]+ba/b[height<=1080]/b",
+        format="bv*[height<=1080]+ba/b[height<=1080]/bestvideo+bestaudio/best",
         merge_output_format="mp4",
         download_ranges=download_range_func(None, [(start, end)]),
         force_keyframes_at_cuts=True,
         outtmpl=str(workdir / "section.%(ext)s"),
-        extractor_args={"youtube": {"player_client": ["android", "tv", "web"]}},
     )
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
