@@ -145,7 +145,7 @@ def _normalize_cookies(raw: str) -> str:
 
 
 def ydl_opts(**extra) -> dict:
-    """Build yt-dlp options, attaching YT_COOKIES env var and IPv4 binding."""
+    """Build yt-dlp options, attaching YT_COOKIES / YT_PO_TOKEN env vars and IPv4 binding."""
     opts = {"quiet": True, "noplaylist": True, "source_address": "0.0.0.0", **extra}
     cookies = os.getenv("YT_COOKIES", "").strip()
     if cookies:
@@ -154,6 +154,13 @@ def ydl_opts(**extra) -> dict:
         if not cpath.exists() or cpath.read_text(encoding="utf-8", errors="ignore") != norm:
             cpath.write_text(norm, encoding="utf-8")
         opts["cookiefile"] = str(cpath)
+    po_token = os.getenv("YT_PO_TOKEN", "").strip()
+    if po_token:
+        ex = dict(opts.get("extractor_args") or {})
+        yt_ex = dict(ex.get("youtube") or {})
+        yt_ex["po_token"] = [po_token if "+" in po_token else f"web.gvs+{po_token}"]
+        ex["youtube"] = yt_ex
+        opts["extractor_args"] = ex
     return opts
 
 
