@@ -24,6 +24,7 @@ and copyright law.
 """
 
 import argparse
+import base64
 import os
 import shutil
 import subprocess
@@ -96,12 +97,20 @@ def check_tools() -> None:
 
 
 def ydl_opts(**extra) -> dict:
-    """Build yt-dlp options, attaching YT_COOKIES env var if set (helpful on cloud IPs)."""
+    """Build yt-dlp options, attaching YT_COOKIES env var (raw Netscape or base64) if set."""
     opts = {"quiet": True, "noplaylist": True, **extra}
     cookies = os.getenv("YT_COOKIES", "").strip()
     if cookies:
+        if "\n" not in cookies and "\\n" in cookies:
+            cookies = cookies.replace("\\n", "\n")
+        elif "\n" not in cookies and not cookies.startswith("#"):
+            try:
+                cookies = base64.b64decode(cookies).decode("utf-8")
+            except Exception:  # noqa: BLE001
+                pass
         cpath = temp_workdir() / "cookies.txt"
-        cpath.write_text(cookies, encoding="utf-8")
+        if not cpath.exists() or cpath.read_text(encoding="utf-8", errors="ignore") != cookies:
+            cpath.write_text(cookies, encoding="utf-8")
         opts["cookiefile"] = str(cpath)
     return opts
 
