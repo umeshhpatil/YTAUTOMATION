@@ -65,7 +65,7 @@ def run_job(jid: str, url: str, clips: list, mode: str) -> None:
 
         def _cut(idx: int, s: float, e: float) -> tuple[int, dict]:
             name = f"{vid}_{jid}_{int(s)}-{int(e)}_{mode}.mp4"
-            sc.cut_clip(streams, float(s), float(e), OUT / name, mode)
+            sc.cut_clip(streams, float(s), float(e), OUT / name, mode, fallback_url=url)
             return idx, {"name": f"{vid}_{int(s)}-{int(e)}_{mode}.mp4", "url": f"/clips/{name}"}
 
         workers = min(max(1, int(os.getenv("MAX_WORKERS", "3"))), total)

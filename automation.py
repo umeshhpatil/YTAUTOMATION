@@ -568,7 +568,7 @@ def run(jid: str, p: dict) -> None:
                         if p.get("captions") and transcript
                         else None
                     )
-                    sc.cut_clip(streams, s, e, out_path, p["mode"], subs_path=subs_path)
+                    sc.cut_clip(streams, s, e, out_path, p["mode"], subs_path=subs_path, fallback_url=p["url"])
                 item.update(file=f"/clips/{name}", name=name, status="Writing metadata...")
                 clip_text = clip_transcript_text(transcript, s, e)
                 md = make_metadata(info, p["url"], p["niche"], i, total, transcript=clip_text)

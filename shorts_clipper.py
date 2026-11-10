@@ -128,11 +128,14 @@ def download(url: str, workdir: Path) -> tuple[Path, float, str]:
     return source, float(info.get("duration") or 0), title.strip().replace(" ", "_")[:50] or "video"
 
 
-def get_streams(url: str) -> tuple[list[tuple[str, dict]], float, str, dict]:
+def get_streams(
+    url: str, player_clients: list[str] | None = None
+) -> tuple[list[tuple[str, dict]], float, str, dict]:
     """Resolve remote video/audio stream URLs via yt-dlp without downloading locally."""
     import yt_dlp
 
-    opts = ydl_opts(format=STREAM_FORMAT, skip_download=True)
+    extra = {"extractor_args": {"youtube": {"player_client": player_clients}}} if player_clients else {}
+    opts = ydl_opts(format=STREAM_FORMAT, skip_download=True, **extra)
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     req_fmts = info.get("requested_formats") or []
@@ -251,27 +254,28 @@ def build_filter(mode: str, subs_path: Path | None = None, audio_idx: int = 0) -
     return ["-filter_complex", graph, "-map", "[v]", "-map", f"{audio_idx}:a?"]
 
 
-def cut_clip(
-    source: Path | str | list[tuple[str, dict]],
+def _run_ffmpeg_cut(
+    inputs: list[tuple[str, dict]],
     start: float,
-    end: float,
+    duration: float,
     out: Path,
     mode: str,
-    subs_path: Path | None = None,
-    preset: str = "veryfast",
+    subs_path: Path | None,
+    preset: str,
 ) -> None:
-    duration = end - start
-    if duration > MAX_SHORT_SECONDS:
-        print(f"  ! Warning: clip is {duration:.0f}s; Shorts max is {MAX_SHORT_SECONDS}s.")
-    inputs = source if isinstance(source, list) else [(str(source), {})]
     cmd = ["ffmpeg", "-y"]
     for src, hdrs in inputs:
         src_str = str(src)
         if src_str.startswith(("http://", "https://")):
             cmd.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"])
             if hdrs:
+                ua = next((v for k, v in hdrs.items() if k.lower() == "user-agent"), None)
+                if ua:
+                    cmd.extend(["-user_agent", ua])
                 hdr_lines = "".join(
-                    f"{k}: {v}\r\n" for k, v in hdrs.items() if k.lower() not in ("host", "content-length")
+                    f"{k}: {v}\r\n"
+                    for k, v in hdrs.items()
+                    if k.lower() not in ("host", "content-length", "user-agent")
                 )
                 if hdr_lines:
                     cmd.extend(["-headers", hdr_lines])
@@ -284,6 +288,52 @@ def cut_clip(
         str(out),
     ])
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
+def _download_section(url: str, start: float, end: float, workdir: Path) -> Path:
+    import yt_dlp
+    from yt_dlp.utils import download_range_func
+
+    opts = ydl_opts(
+        format="bv*[height<=1080]+ba/b[height<=1080]/b",
+        merge_output_format="mp4",
+        download_ranges=download_range_func(None, [(start, end)]),
+        force_keyframes_at_cuts=True,
+        outtmpl=str(workdir / "section.%(ext)s"),
+        extractor_args={"youtube": {"player_client": ["android", "tv", "web"]}},
+    )
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url])
+    return next(workdir.glob("section.*"))
+
+
+def cut_clip(
+    source: Path | str | list[tuple[str, dict]],
+    start: float,
+    end: float,
+    out: Path,
+    mode: str,
+    subs_path: Path | None = None,
+    preset: str = "veryfast",
+    fallback_url: str | None = None,
+) -> None:
+    duration = end - start
+    if duration > MAX_SHORT_SECONDS:
+        print(f"  ! Warning: clip is {duration:.0f}s; Shorts max is {MAX_SHORT_SECONDS}s.")
+    inputs = source if isinstance(source, list) else [(str(source), {})]
+    try:
+        _run_ffmpeg_cut(inputs, start, duration, out, mode, subs_path, preset)
+    except subprocess.CalledProcessError as err:
+        stderr = err.stderr.decode(errors="ignore") if err.stderr else ""
+        if not (isinstance(source, list) and fallback_url and ("403" in stderr or "HTTP error" in stderr)):
+            raise
+        try:
+            alt_streams, _, _, _ = get_streams(fallback_url, player_clients=["android", "tv"])
+            _run_ffmpeg_cut(alt_streams, start, duration, out, mode, subs_path, preset)
+        except subprocess.CalledProcessError:
+            with tempfile.TemporaryDirectory() as td:
+                sec = _download_section(fallback_url, start, end, Path(td))
+                _run_ffmpeg_cut([(str(sec), {})], 0.0, duration, out, mode, subs_path, preset)
 
 
 def main() -> None:

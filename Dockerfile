@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg fontconfig fonts-liberation ca-certificates \
+    ffmpeg nodejs fontconfig fonts-liberation ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -1,6 +1,6 @@
 flask
 gunicorn
-yt-dlp
+yt-dlp[default]
 anthropic
 google-genai>=2.30.1
 google-api-python-client
