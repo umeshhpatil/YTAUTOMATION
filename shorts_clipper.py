@@ -25,7 +25,9 @@ and copyright law.
 
 import argparse
 import base64
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,21 +98,56 @@ def check_tools() -> None:
         sys.exit("yt-dlp not found. Run: pip install yt-dlp")
 
 
+def _normalize_cookies(raw: str) -> str:
+    """Accept Netscape cookies.txt, base64, escaped \\n, or JSON cookie exports."""
+    text = raw.strip()
+    if "\\n" in text and "\n" not in text:
+        text = text.replace("\\n", "\n")
+    if "\n" not in text and not text.startswith(("#", "[")):
+        try:
+            pad = "=" * (-len(text) % 4)
+            decoded = base64.b64decode(text + pad).decode("utf-8")
+            if "\t" in decoded or decoded.lstrip().startswith(("#", "[")):
+                text = decoded
+        except Exception:  # noqa: BLE001
+            pass
+    if text.lstrip().startswith("["):
+        items = json.loads(text)
+        lines = ["# Netscape HTTP Cookie File"]
+        for c in items:
+            dom = str(c.get("domain", ""))
+            sub = "TRUE" if dom.startswith(".") else "FALSE"
+            path = str(c.get("path", "/"))
+            sec = "TRUE" if c.get("secure") else "FALSE"
+            exp = str(int(float(c.get("expirationDate") or c.get("expiry") or 0)))
+            name, val = str(c.get("name", "")), str(c.get("value", ""))
+            if dom and name:
+                lines.append(f"{dom}\t{sub}\t{path}\t{sec}\t{exp}\t{name}\t{val}")
+        text = "\n".join(lines) + "\n"
+    elif "\n" not in text and "\t" in text:
+        # Recover lines if a single-line env var box flattened newlines into spaces
+        text = re.sub(r"^#(?: Netscape HTTP Cookie File| HTTP Cookie File)\s*", "", text)
+        text = re.sub(r"\s+(?=\.[a-z0-9.-]+\t|youtube\.com\t|www\.youtube\.com\t)", "\n", text)
+        text = "# Netscape HTTP Cookie File\n" + text.strip() + "\n"
+    elif not text.startswith("# Netscape") and not text.startswith("# HTTP Cookie"):
+        text = "# Netscape HTTP Cookie File\n" + text
+    if not any(ln and not ln.startswith("#") and ln.count("\t") >= 6 for ln in text.splitlines()):
+        raise ValueError(
+            "YT_COOKIES is not valid Netscape cookies.txt (or base64/JSON). "
+            "Run: base64 -w0 cookies.txt"
+        )
+    return text if text.endswith("\n") else text + "\n"
+
+
 def ydl_opts(**extra) -> dict:
-    """Build yt-dlp options, attaching YT_COOKIES env var (raw Netscape or base64) if set."""
+    """Build yt-dlp options, attaching YT_COOKIES env var if set."""
     opts = {"quiet": True, "noplaylist": True, **extra}
     cookies = os.getenv("YT_COOKIES", "").strip()
     if cookies:
-        if "\n" not in cookies and "\\n" in cookies:
-            cookies = cookies.replace("\\n", "\n")
-        elif "\n" not in cookies and not cookies.startswith("#"):
-            try:
-                cookies = base64.b64decode(cookies).decode("utf-8")
-            except Exception:  # noqa: BLE001
-                pass
+        norm = _normalize_cookies(cookies)
         cpath = temp_workdir() / "cookies.txt"
-        if not cpath.exists() or cpath.read_text(encoding="utf-8", errors="ignore") != cookies:
-            cpath.write_text(cookies, encoding="utf-8")
+        if not cpath.exists() or cpath.read_text(encoding="utf-8", errors="ignore") != norm:
+            cpath.write_text(norm, encoding="utf-8")
         opts["cookiefile"] = str(cpath)
     return opts
 
