@@ -154,11 +154,16 @@ def ydl_opts(**extra) -> dict:
         if not cpath.exists() or cpath.read_text(encoding="utf-8", errors="ignore") != norm:
             cpath.write_text(norm, encoding="utf-8")
         opts["cookiefile"] = str(cpath)
-    po_token = os.getenv("YT_PO_TOKEN", "").strip()
+    po_token = os.getenv("YT_PO_TOKEN", "").strip().strip("\"'")
     if po_token:
+        tok = po_token if "+" in po_token else f"web.gvs+{po_token}"
         ex = dict(opts.get("extractor_args") or {})
         yt_ex = dict(ex.get("youtube") or {})
-        yt_ex["po_token"] = [po_token if "+" in po_token else f"web.gvs+{po_token}"]
+        yt_ex["po_token"] = [tok]
+        if "player_client" not in yt_ex:
+            client = tok.split(".", 1)[0].split("+", 1)[0]
+            if client:
+                yt_ex["player_client"] = [client, "tv", "web_safari"]
         ex["youtube"] = yt_ex
         opts["extractor_args"] = ex
     return opts
