@@ -118,7 +118,7 @@ def api_process():
     d = request.json or {}
     clips = d.get("clips", [])
     mode = d.get("mode", "blur")
-    if not clips or mode not in ("blur", "crop"):
+    if not clips or mode not in sc.VALID_MODES:
         return jsonify(error="Add at least one clip."), 400
     for s, e in clips:
         if e <= s or e - s > sc.MAX_SHORT_SECONDS:
@@ -228,9 +228,12 @@ h3{margin:0 0 10px;font-size:15px}
 
     <div class="card">
       <h3>Style</h3>
-      <div class="row" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:12px;flex-wrap:wrap;gap:6px">
         <button class="seg on" data-mode="blur">Blur fill</button>
-        <button class="seg" data-mode="crop">Center crop</button>
+        <button class="seg" data-mode="square_blur">Square + Blur (1:1)</button>
+        <button class="seg" data-mode="tall_blur">Zoom + Blur (4:5)</button>
+        <button class="seg" data-mode="crop">Center crop (9:16)</button>
+        <button class="seg" data-mode="black">Fit (Black)</button>
       </div>
       <div class="phone" id="phone"><div class="bg" id="phoneBg"></div><img id="phoneImg" alt=""></div>
       <p class="mute" style="text-align:center;margin:8px 0 0">9:16 preview</p>

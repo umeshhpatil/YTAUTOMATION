@@ -706,7 +706,7 @@ def start_run():
             "prompt": (d.get("prompt") or "").strip(),
             "count": int(d.get("count", 3)),
             "length": int(d.get("length", 10 if source == "prompt" else 45)),
-            "mode": d.get("mode", "blur") if d.get("mode") in ("blur", "crop") else "blur",
+            "mode": d.get("mode", "blur") if d.get("mode") in sc.VALID_MODES else "blur",
             "captions": bool(d.get("captions", True)),
             "niche": d.get("niche", ""),
             "upload": bool(d.get("upload")),
@@ -885,7 +885,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
        <div><label>Number of Shorts</label><input id="count" type="number" min="1" max="20" value="3"></div>
        <div class="urlOnly"><label>Length of each (sec)</label><input id="length" type="number" min="5" max="180" value="45"></div>
        <div class="promptOnly hidden"><label>Clip duration (3–15 sec)</label><input id="omniLen" type="number" min="3" max="15" value="10"></div>
-       <div class="urlOnly"><label>Style</label><select id="mode"><option value="blur">Blur fill</option><option value="crop">Center crop</option></select></div>
+       <div class="urlOnly"><label>Style</label><select id="mode"><option value="blur">Blur fill (Full video)</option><option value="square_blur">Square + Blur fill (1:1)</option><option value="tall_blur">Zoom + Blur fill (4:5)</option><option value="crop">Center crop (9:16)</option><option value="black">Fit (Black bars)</option></select></div>
        <div><label>Niche / keywords</label><input id="niche" placeholder="e.g. fitness, workout tips"></div>
       </div>
       <div class="row" style="margin-top:14px">

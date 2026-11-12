@@ -311,20 +311,40 @@ def _escape_filter_path(path: Path) -> str:
     return s
 
 
+STYLES = (
+    ("blur", "Blur fill (Full video)"),
+    ("square_blur", "Square + Blur fill (1:1)"),
+    ("tall_blur", "Zoom + Blur fill (4:5)"),
+    ("crop", "Center crop (9:16)"),
+    ("black", "Fit (Black bars)"),
+)
+VALID_MODES = tuple(k for k, _ in STYLES)
+_BLUR_FG = {
+    "blur": "scale=1080:-2",
+    "square_blur": "crop='min(iw,ih)':'min(iw,ih)',scale=1080:1080",
+    "tall_blur": "crop='min(iw,ih*4/5)':'min(ih,iw*5/4)',scale=1080:1350",
+}
+
+
 def build_filter(mode: str, subs_path: Path | None = None, audio_idx: int = 0) -> list[str]:
     ass = f",ass={_escape_filter_path(subs_path)}" if subs_path else ""
-    if mode == "crop":
-        # Center-crop to 9:16, fills the whole frame (loses left/right sides)
-        vf = f"crop=ih*9/16:ih,scale=1080:1920,setsar=1{ass}"
+    if mode in ("crop", "black"):
+        base = (
+            "crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=1080:1920"
+            if mode == "crop"
+            else "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"
+        )
+        vf = f"{base},setsar=1{ass}"
         if audio_idx > 0:
             return ["-vf", vf, "-map", "0:v", "-map", f"{audio_idx}:a?"]
         return ["-vf", vf]
-    # Blur mode: downscale background to 270x480 before blurring to cut RAM/CPU by ~16x
+    fg_filter = _BLUR_FG.get(mode, _BLUR_FG["blur"])
+    # Downscale background to 270x480 before blurring to cut RAM/CPU by ~16x
     graph = (
         "[0:v]split=2[bg][fg];"
         "[bg]scale=270:480:force_original_aspect_ratio=increase,"
         "crop=270:480,boxblur=6:2,scale=1080:1920:flags=bilinear[bgb];"
-        "[fg]scale=1080:-2[fgs];"
+        f"[fg]{fg_filter}[fgs];"
         f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1{ass}[v]"
     )
     return ["-filter_complex", graph, "-map", "[v]", "-map", f"{audio_idx}:a?"]
@@ -431,8 +451,8 @@ def main() -> None:
                    help="Split into equal chunks of this length (e.g. 58)")
     p.add_argument("--range", dest="split_range", metavar="START-END",
                    help="Limit --auto-split to this part of the video")
-    p.add_argument("--mode", choices=["blur", "crop"], default="blur",
-                   help="blur = full video + blurred background (default); crop = center crop")
+    p.add_argument("--mode", choices=list(VALID_MODES), default="blur",
+                   help="Clip framing style (default: blur)")
     p.add_argument("--out", default="shorts_output", help="Output folder")
     p.add_argument("--keep-source", action="store_true", help="Keep the downloaded source video")
     args = p.parse_args()
