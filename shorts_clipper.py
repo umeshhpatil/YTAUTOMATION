@@ -406,7 +406,7 @@ def cut_clip(
         try:
             alt_streams, _, _, _ = get_streams(fallback_url, player_clients=["tv", "web_safari"])
             _run_ffmpeg_cut(alt_streams, start, duration, out, mode, subs_path, preset)
-        except subprocess.CalledProcessError:
+        except Exception:  # noqa: BLE001
             if fallback_dir is not None:
                 sec = _download_source(fallback_url, fallback_dir)
                 _run_ffmpeg_cut([(str(sec), {})], start, duration, out, mode, subs_path, preset)
